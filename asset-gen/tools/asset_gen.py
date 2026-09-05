@@ -16,7 +16,7 @@ Providers are configured via environment variables:
   XAI_API_HOST             optional alternative xAI gRPC host
   ALT_IMAGE_BASE_URL       optional OpenAI-compatible images endpoint (e.g. https://api.example.com/v1)
   ALT_IMAGE_API_KEY        key for the OpenAI-compatible endpoint
-  ALT_IMAGE_MODEL          model name at that endpoint (default: grok-2-image)
+  ALT_IMAGE_MODEL          model name at that endpoint (default: grok-imagine-image)
   ALT_IMAGE_COST_CENTS     estimated cost per image, for reporting (default: 2)
   ALT_VIDEO_BASE_URL       optional xAI-REST-compatible video endpoint (gateway); falls back to ALT_IMAGE_BASE_URL
   ALT_VIDEO_API_KEY        key for that endpoint; falls back to ALT_IMAGE_API_KEY
@@ -120,7 +120,7 @@ GEMINI_ASPECT_RATIOS = [
 # Optional OpenAI-compatible image backend (any relay/provider exposing /v1/images/generations)
 ALT_IMAGE_BASE_URL = os.environ.get("ALT_IMAGE_BASE_URL", "").rstrip("/")
 ALT_IMAGE_API_KEY = os.environ.get("ALT_IMAGE_API_KEY", "")
-ALT_IMAGE_MODEL = os.environ.get("ALT_IMAGE_MODEL", "grok-2-image")
+ALT_IMAGE_MODEL = os.environ.get("ALT_IMAGE_MODEL", "grok-imagine-image")
 ALT_IMAGE_COST = int(os.environ.get("ALT_IMAGE_COST_CENTS", "2"))
 
 ALL_SIZES = ["512", "1K", "2K", "4K"]
