@@ -46,7 +46,7 @@ Recipe: **reference → pose → video → extract frames → loop-trim → remb
 
 1. Reference (Gemini 1K, neutral pose, solid BG) — anchors everything; review carefully.
 2. Pose per action: image-to-image from the reference, prompt only the action.
-3. Video from the pose frame: `asset_gen.py video --image pose.png --duration 2 -o walk.mp4` (Grok, `--duration` 1–15s, 5¢/s; needs `XAI_API_KEY`). Alternative: `--backend veo` (or `VIDEO_BACKEND=veo`) runs on the Gemini key instead — duration clamps to 4–8s (~15¢/s), the extra length beyond one cycle is trimmed by loop-trim below.
+3. Video from the pose frame: `asset_gen.py video --image pose.png --duration 2 -o walk.mp4` (`--duration` 1–15s). Backends: `grok` (default, official xAI gRPC, 5¢/s, `XAI_API_KEY`) · `alt` (xAI-REST gateway via `ALT_VIDEO_*`/`ALT_IMAGE_*` env, default model grok-imagine-video-1.5, ~14¢/s) · `veo` (Gemini key, clamps to 4–8s, ~15¢/s — extra length beyond one cycle is trimmed by loop-trim below). Select per-call with `--backend` or globally with `VIDEO_BACKEND`.
 4. Extract: `ffmpeg -i walk.mp4 -vsync 0 frames/%04d.png`.
 5. Loop-trim looping cycles (walk/idle): `tools/find_loop_frame.py frames/` returns the loop frame; delete frames past it. Skip for one-shots (attack/death).
 6. Batch matte: `tools/rembg_matting.py --batch frames/ -o clean/`.

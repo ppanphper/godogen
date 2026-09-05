@@ -18,9 +18,11 @@ Providers are configured via environment variables:
   ALT_IMAGE_API_KEY        key for the OpenAI-compatible endpoint
   ALT_IMAGE_MODEL          model name at that endpoint (default: grok-2-image)
   ALT_IMAGE_COST_CENTS     estimated cost per image, for reporting (default: 2)
-  VIDEO_BACKEND            grok (default) | veo
+  ALT_VIDEO_BASE_URL       optional xAI-REST-compatible video endpoint (gateway); falls back to ALT_IMAGE_BASE_URL
+  ALT_VIDEO_API_KEY        key for that endpoint; falls back to ALT_IMAGE_API_KEY
+  VIDEO_BACKEND            grok (default, official gRPC) | alt (gateway REST) | veo
   VIDEO_MODEL              override the active backend's model id
-  VIDEO_COST_CENTS_PER_SEC estimated video cost per second (default: grok 5, veo 15)
+  VIDEO_COST_CENTS_PER_SEC estimated video cost per second (default: grok 5, alt 14, veo 15)
 
 Output: JSON to stdout. Progress to stderr.
 """
@@ -58,11 +60,15 @@ from tripo3d import (
 
 TOOLS_DIR = Path(__file__).parent
 
-VIDEO_BACKEND = os.environ.get("VIDEO_BACKEND", "grok")  # grok | veo
-VIDEO_MODEL_DEFAULTS = {"grok": "grok-imagine-video", "veo": "veo-3.0-fast-generate-001"}
-VIDEO_COST_DEFAULTS = {"grok": 5, "veo": 15}  # cents/sec
-VIDEO_POLL_INTERVAL = 10  # seconds (veo)
-VIDEO_POLL_TIMEOUT = 600  # seconds (veo)
+VIDEO_BACKEND = os.environ.get("VIDEO_BACKEND", "grok")  # grok | alt | veo
+VIDEO_MODEL_DEFAULTS = {
+    "grok": "grok-imagine-video",
+    "alt": "grok-imagine-video-1.5",
+    "veo": "veo-3.0-fast-generate-001",
+}
+VIDEO_COST_DEFAULTS = {"grok": 5, "alt": 14, "veo": 15}  # cents/sec
+VIDEO_POLL_INTERVAL = 10  # seconds (alt/veo)
+VIDEO_POLL_TIMEOUT = 600  # seconds (alt/veo)
 
 
 def _video_model(backend: str) -> str:
@@ -282,6 +288,61 @@ def _video_grok(args, output: Path, model: str):
     return args.duration
 
 
+def _video_alt(args, output: Path, model: str):
+    """xAI-REST-compatible video generation through a gateway (e.g. new-api).
+
+    POST {base}/videos/generations -> {request_id}, then poll
+    GET {base}/videos/{request_id} until status is done.
+    """
+    base = (os.environ.get("ALT_VIDEO_BASE_URL") or ALT_IMAGE_BASE_URL).rstrip("/")
+    key = os.environ.get("ALT_VIDEO_API_KEY") or ALT_IMAGE_API_KEY
+    if not (base and key):
+        raise ValueError("alt video backend needs ALT_VIDEO_BASE_URL/ALT_VIDEO_API_KEY (or the ALT_IMAGE_* equivalents)")
+    headers = {"Authorization": f"Bearer {key}"}
+
+    resp = requests.post(
+        f"{base}/videos/generations",
+        headers=headers,
+        json={
+            "model": model,
+            "prompt": args.prompt,
+            "image_url": _image_data_uri(Path(args.image)),
+            "duration": args.duration,
+            "resolution": args.resolution,
+            "aspect_ratio": "1:1",
+        },
+        timeout=120,
+    )
+    resp.raise_for_status()
+    request_id = resp.json()["request_id"]
+    print(f"  request_id: {request_id}", file=sys.stderr)
+
+    waited = 0
+    while True:
+        if waited >= VIDEO_POLL_TIMEOUT:
+            raise TimeoutError(f"Video generation still running after {VIDEO_POLL_TIMEOUT}s (request_id: {request_id})")
+        time.sleep(VIDEO_POLL_INTERVAL)
+        waited += VIDEO_POLL_INTERVAL
+        poll = requests.get(f"{base}/videos/{request_id}", headers=headers, timeout=60)
+        poll.raise_for_status()
+        data = poll.json()
+        status = data.get("status")
+        print(f"  ...{waited}s ({status})", file=sys.stderr)
+        if status == "done":
+            break
+        if status in ("failed", "expired"):
+            raise RuntimeError(f"Video generation {status}: {json.dumps(data)[:500]}")
+
+    video_url = (data.get("video") or {}).get("url") or data.get("url")
+    if not video_url:
+        raise RuntimeError(f"No video url in response: {json.dumps(data)[:500]}")
+    print("  Downloading video...", file=sys.stderr)
+    dl = requests.get(video_url, timeout=120)
+    dl.raise_for_status()
+    output.write_bytes(dl.content)
+    return args.duration
+
+
 def _video_veo(args, output: Path, model: str):
     # Veo clips are 4-8s; shorter requests are clamped up. Loop-trim
     # (find_loop_frame.py) extracts the cycle downstream, so extra length is fine.
@@ -351,6 +412,8 @@ def cmd_video(args):
     try:
         if backend == "grok":
             billed = _video_grok(args, output, model)
+        elif backend == "alt":
+            billed = _video_alt(args, output, model)
         else:
             billed = _video_veo(args, output, model)
     except Exception as e:
@@ -659,11 +722,12 @@ def main():
     p_vid = sub.add_parser("video", help="Generate MP4 video from prompt + reference image (Grok 5¢/sec default, or Veo)")
     p_vid.add_argument("--prompt", required=True, help="Video generation prompt")
     p_vid.add_argument("--image", required=True, help="Reference image path (starting frame)")
-    p_vid.add_argument("--duration", type=int, required=True, help="Duration in seconds (grok: 1-15; veo: clamped to 4-8)")
+    p_vid.add_argument("--duration", type=int, required=True, help="Duration in seconds (grok/alt: 1-15; veo: clamped to 4-8)")
     p_vid.add_argument("--resolution", choices=["480p", "720p"], default="720p",
-                       help="Video resolution (grok only; veo output is model-controlled). Default: 720p")
-    p_vid.add_argument("--backend", choices=["grok", "veo"], default=None,
-                       help="Video backend. Default: VIDEO_BACKEND env or grok. veo needs only GOOGLE_API_KEY.")
+                       help="Video resolution (grok/alt; veo output is model-controlled). Default: 720p")
+    p_vid.add_argument("--backend", choices=["grok", "alt", "veo"], default=None,
+                       help="Video backend: grok (official gRPC), alt (xAI-REST gateway), veo (Gemini key). "
+                            "Default: VIDEO_BACKEND env or grok.")
     p_vid.add_argument("-o", "--output", required=True, help="Output MP4 path")
     p_vid.set_defaults(func=cmd_video)
 

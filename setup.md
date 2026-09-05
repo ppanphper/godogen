@@ -141,7 +141,8 @@ Optional provider overrides:
 - `GOOGLE_GEMINI_BASE_URL` — non-official Gemini-compatible endpoint (relay/proxy providers)
 - `XAI_API_HOST` — alternative xAI gRPC host (protocol must match xAI's gRPC API)
 - `ALT_IMAGE_BASE_URL` / `ALT_IMAGE_API_KEY` / `ALT_IMAGE_MODEL` — OpenAI-compatible images endpoint for the cheap `--model alt` image tier (falls back to Gemini when unset)
-- `VIDEO_BACKEND` — `grok` (default) or `veo`; `veo` needs only the Gemini key
+- `ALT_VIDEO_BASE_URL` / `ALT_VIDEO_API_KEY` — xAI-REST-compatible video endpoint for the `alt` video backend (gateways like new-api; fall back to the `ALT_IMAGE_*` values)
+- `VIDEO_BACKEND` — `grok` (default, official gRPC), `alt` (gateway REST), or `veo` (needs only the Gemini key)
 - `VIDEO_MODEL` — override the active video backend's model id
 - `VIDEO_COST_CENTS_PER_SEC` / `ALT_IMAGE_COST_CENTS` — cost-reporting estimates matching your provider's pricing
 
