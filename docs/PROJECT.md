@@ -45,7 +45,7 @@ The manifest states only this intent; everything about *how to show and capture*
 
 **Trust the model.** The runtime ships no scaffold and no planner. The model recreates boilerplate from a short sketch and decomposes the work itself; the guides spend their words only on what it genuinely can't know.
 
-**Cost-aware asset generation.** Gemini, Grok, and Tripo3D are used where they make economic sense — the agent confirms costs with the user before generating, and the asset manifest in `README.md` tracks paths, in-game sizes, and costs so implementation doesn't lose them.
+**Cost-aware asset generation.** Gemini, Veo, an optional OpenAI-compatible image provider, and Tripo3D are used where they make economic sense — the agent confirms costs with the user before generating, and the asset manifest in `README.md` tracks paths, in-game sizes, and costs so implementation doesn't lose them.
 
 **One source, many targets.** Engine and host agent are render-time choices over one source tree.
 

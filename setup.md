@@ -132,9 +132,15 @@ ls "$(dirname "$(which godot)")"/GodotSharp/
 
 Set in environment:
 
-- `GOOGLE_API_KEY` — Gemini image generation
-- `XAI_API_KEY` — xAI Grok image/video generation
-- `TRIPO3D_API_KEY` — image-to-3D conversion
+- `GOOGLE_API_KEY` — Gemini image generation + Veo video generation (required)
+- `TRIPO3D_API_KEY` — image-to-3D conversion (only for 3D asset pipelines)
+
+Optional provider overrides:
+
+- `GOOGLE_GEMINI_BASE_URL` — non-official Gemini-compatible endpoint (relay/proxy providers)
+- `ALT_IMAGE_BASE_URL` / `ALT_IMAGE_API_KEY` / `ALT_IMAGE_MODEL` — OpenAI-compatible images endpoint for the cheap `--model alt` image tier (falls back to Gemini when unset)
+- `VIDEO_MODEL` — Veo model id (default `veo-3.0-fast-generate-001`)
+- `VIDEO_COST_CENTS_PER_SEC` / `ALT_IMAGE_COST_CENTS` — cost-reporting estimates matching your provider's pricing
 
 ## Verify Rendering
 

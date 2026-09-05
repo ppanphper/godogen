@@ -5,21 +5,21 @@ short_description: Generate game images, GLB 3D models, rigged characters, and a
 default_prompt: "Use ${ASSET_SKILL_COMMAND} to generate images, 3D models, or animated sprites for this game."
 allow_implicit_invocation: true
 description: |
-  Generate visual assets from text prompts: PNG images (Gemini / xAI Grok), GLB 3D models (Tripo3D), rigged biped characters, retargeted animations, and frame-by-frame animated sprites, plus background removal. Use whenever a game needs generated art.
+  Generate visual assets from text prompts: PNG images (Gemini / OpenAI-compatible providers), GLB 3D models (Tripo3D), rigged biped characters, retargeted animations, and frame-by-frame animated sprites, plus background removal. Use whenever a game needs generated art.
 ---
 
 # Asset Generator
 
-Generate PNG images (Gemini or xAI Grok) and GLB 3D models (Tripo3D) from text prompts. These are paid APIs — every call costs real money. Tools live at `${ASSET_GEN_SKILL_DIR}/tools/`; run from the project root and keep runtime-loaded outputs under `${RUNTIME_ASSET_DIR}/`.
+Generate PNG images (Gemini, or an OpenAI-compatible provider), MP4 videos (Veo) and GLB 3D models (Tripo3D) from text prompts. These are paid APIs — every call costs real money. Tools live at `${ASSET_GEN_SKILL_DIR}/tools/`; run from the project root and keep runtime-loaded outputs under `${RUNTIME_ASSET_DIR}/`.
 
 ## Models
 
 | Model | Flag | Cost | Best for |
 |-------|------|------|----------|
-| Gemini | `--model gemini` | 5¢ (512) · 7¢ (1K) · 10¢ (2K) · 15¢ (4K) | Precise prompt following — references, characters, 3D refs, exact layouts |
-| Grok | `--model grok` (default) | 2¢ | High quality but imprecise — textures, simple objects, item kits, scenic backgrounds |
+| Gemini | `--model gemini` (default) | 5¢ (512) · 7¢ (1K) · 10¢ (2K) · 15¢ (4K) | Precise prompt following — references, characters, 3D refs, exact layouts, image-to-image |
+| Alt | `--model alt` | ~2¢ (provider-dependent) | Cheap simple images — textures, item kits, scenic backgrounds. Optional; needs `ALT_IMAGE_BASE_URL`/`ALT_IMAGE_API_KEY` (OpenAI-compatible endpoint), silently falls back to Gemini when unset |
 
-Grok produces great-looking output but often ignores specific instructions; reach for Gemini when the result must match what you described.
+Gemini honors `GOOGLE_GEMINI_BASE_URL` for non-official endpoints. The alt backend ignores `--size`/`--aspect-ratio` and rejects reference images — use Gemini whenever the result must match exact dimensions or a reference.
 
 ## Images
 
@@ -28,7 +28,7 @@ python3 ${ASSET_GEN_SKILL_DIR}/tools/asset_gen.py image \
   --prompt "the full prompt" -o ${RUNTIME_ASSET_DIR}/img/car.png
 ```
 
-`--model` (default `grok`) · `--size` (default `1K`; Gemini also `512`/`4K`) · `--aspect-ratio` (default `1:1`; also `16:9`, `9:16`, `4:3`, `3:4`, `3:2`, `2:3`).
+`--model` (default `gemini`) · `--size` (default `1K`; also `512`/`2K`/`4K`) · `--aspect-ratio` (default `1:1`; also `16:9`, `9:16`, `4:3`, `3:4`, `3:2`, `2:3`).
 
 **Image-to-image:** pass `--image ref.png` and the model sees the reference — prompt only for what changes (angle, pose, recolor), don't re-describe appearance. Use this for style families (one hero asset → the rest), variants, and multi-view sets.
 
@@ -46,7 +46,7 @@ Recipe: **reference → pose → video → extract frames → loop-trim → remb
 
 1. Reference (Gemini 1K, neutral pose, solid BG) — anchors everything; review carefully.
 2. Pose per action: image-to-image from the reference, prompt only the action.
-3. Video from the pose frame: `asset_gen.py video --image pose.png --duration 2 -o walk.mp4` (`--duration` 1–15s, `--resolution` 720p; cost 5¢/s).
+3. Video from the pose frame: `asset_gen.py video --image pose.png --duration 4 -o walk.mp4` (Veo; `--duration` clamped to the model's 4–8s range; cost ~15¢/s — the extra length beyond one cycle is trimmed by loop-trim below).
 4. Extract: `ffmpeg -i walk.mp4 -vsync 0 frames/%04d.png`.
 5. Loop-trim looping cycles (walk/idle): `tools/find_loop_frame.py frames/` returns the loop frame; delete frames past it. Skip for one-shots (attack/death).
 6. Batch matte: `tools/rembg_matting.py --batch frames/ -o clean/`.
@@ -89,7 +89,7 @@ victory_celebration volleyball wait walk warm_up wave_goodbye_01/02
 
 ## Costs
 
-Each generation costs real money, so confirm with the user before generating. Quick reference: texture/simple sprite (Grok) 2¢ · character/ref (Gemini 1K) 7¢ · background 2¢ (Grok) or 10¢ (Gemini 2K) · full 3D asset 37¢ (7¢ image + 30¢ GLB) · rigged character walk/idle/attack ≈ 92¢.
+Each generation costs real money, so confirm with the user before generating. Quick reference: texture/simple sprite (alt, if configured) ~2¢ · character/ref (Gemini 1K) 7¢ · background 10¢ (Gemini 2K) · animation video clip (Veo, 4s) ~60¢ · full 3D asset 37¢ (7¢ image + 30¢ GLB) · rigged character walk/idle/attack ≈ 92¢. Video and alt costs are estimates — tune `VIDEO_COST_CENTS_PER_SEC` / `ALT_IMAGE_COST_CENTS` to your provider's pricing.
 
 ## Output and logging
 
