@@ -1,5 +1,6 @@
 xai-sdk
 google-genai
+python-dotenv
 requests
 numpy
 pillow

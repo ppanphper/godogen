@@ -6,3 +6,4 @@
 **/__pycache__
 godot/skills/godot-api/doc_api/
 godot/skills/godot-api/doc_source/
+.env

@@ -130,7 +130,7 @@ ls "$(dirname "$(which godot)")"/GodotSharp/
 
 ## API Keys
 
-Set in environment:
+Set as environment variables, or in a `.env` file at the project root of the published game repo (loaded automatically by the asset tools; real environment variables take precedence, and `.env` is gitignored):
 
 - `GOOGLE_API_KEY` — Gemini image generation (required; also covers Veo video when that backend is selected)
 - `XAI_API_KEY` — xAI Grok video generation (default video backend)

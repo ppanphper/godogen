@@ -39,6 +39,14 @@ from google import genai
 from google.genai import types
 from PIL import Image
 
+try:
+    from dotenv import find_dotenv, load_dotenv
+
+    # Project-root .env (searched upward from cwd); real env vars take precedence
+    load_dotenv(find_dotenv(usecwd=True))
+except ImportError:
+    pass
+
 from tripo3d import (
     create_image_to_model_task,
     create_prerigcheck_task,

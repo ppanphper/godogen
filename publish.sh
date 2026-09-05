@@ -134,6 +134,7 @@ if [ ! -f "$TARGET/.gitignore" ]; then
             printf '.agents\nAGENTS.md\n.codex\n'
         fi
         printf '%s\n' "$ENGINE_GUIDE_FILE"
+        printf '.env\n'
         case "$ENGINE" in
             godot)
                 printf 'assets\nscreenshots\n.godot\n*.import\nbin/\nobj/\n'
