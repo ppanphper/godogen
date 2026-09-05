@@ -46,7 +46,7 @@ Recipe: **reference → pose → video → extract frames → loop-trim → remb
 
 1. Reference (Gemini 1K, neutral pose, solid BG) — anchors everything; review carefully.
 2. Pose per action: image-to-image from the reference, prompt only the action.
-3. Video from the pose frame: `asset_gen.py video --image pose.png --duration 4 -o walk.mp4` (Veo; `--duration` clamped to the model's 4–8s range; cost ~15¢/s — the extra length beyond one cycle is trimmed by loop-trim below).
+3. Video from the pose frame: `asset_gen.py video --image pose.png --duration 2 -o walk.mp4` (Grok, `--duration` 1–15s, 5¢/s; needs `XAI_API_KEY`). Alternative: `--backend veo` (or `VIDEO_BACKEND=veo`) runs on the Gemini key instead — duration clamps to 4–8s (~15¢/s), the extra length beyond one cycle is trimmed by loop-trim below.
 4. Extract: `ffmpeg -i walk.mp4 -vsync 0 frames/%04d.png`.
 5. Loop-trim looping cycles (walk/idle): `tools/find_loop_frame.py frames/` returns the loop frame; delete frames past it. Skip for one-shots (attack/death).
 6. Batch matte: `tools/rembg_matting.py --batch frames/ -o clean/`.
@@ -89,7 +89,7 @@ victory_celebration volleyball wait walk warm_up wave_goodbye_01/02
 
 ## Costs
 
-Each generation costs real money, so confirm with the user before generating. Quick reference: texture/simple sprite (alt, if configured) ~2¢ · character/ref (Gemini 1K) 7¢ · background 10¢ (Gemini 2K) · animation video clip (Veo, 4s) ~60¢ · full 3D asset 37¢ (7¢ image + 30¢ GLB) · rigged character walk/idle/attack ≈ 92¢. Video and alt costs are estimates — tune `VIDEO_COST_CENTS_PER_SEC` / `ALT_IMAGE_COST_CENTS` to your provider's pricing.
+Each generation costs real money, so confirm with the user before generating. Quick reference: texture/simple sprite (alt, if configured) ~2¢ · character/ref (Gemini 1K) 7¢ · background 10¢ (Gemini 2K) · animation video clip (Grok, 2s) 10¢ or (Veo, 4s) ~60¢ · full 3D asset 37¢ (7¢ image + 30¢ GLB) · rigged character walk/idle/attack ≈ 92¢. Video and alt costs are estimates — tune `VIDEO_COST_CENTS_PER_SEC` / `ALT_IMAGE_COST_CENTS` to your provider's pricing.
 
 ## Output and logging
 

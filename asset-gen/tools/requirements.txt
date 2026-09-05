@@ -1,3 +1,4 @@
+xai-sdk
 google-genai
 requests
 numpy

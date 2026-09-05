@@ -26,7 +26,7 @@ Engine and host agent (Claude vs Codex) are publish-time render choices, not sep
 - **Godot 4** — C#/.NET projects with build-time scene generation, runtime scripts, and Jolt physics.
 - **Bevy** — Rust/Bevy projects with code-first ECS scenes and offscreen capture.
 - **Babylon.js** — TypeScript/Vite browser games served at a live URL.
-- **Asset generation** — Gemini for precise references, characters, textures and simple objects (optionally a cheaper OpenAI-compatible provider for the simple tier), Tripo3D for image-to-3D and rigged biped animation; animated sprites via Veo video with loop detection and background removal.
+- **Asset generation** — Gemini for precise references, characters, textures and simple objects (optionally a cheaper OpenAI-compatible provider for the simple tier), Tripo3D for image-to-3D and rigged biped animation; animated sprites via Grok video (or Veo) with loop detection and background removal.
 - **Proof over claims** — the agent judges results from the running game (a live URL or a recorded clip), not from a clean compile, so visible defects drive the next iteration.
 - **You choose your involvement** — watch the live game (a Babylon.js URL, or a Godot/Bevy project you run) and steer at decision points, or leave the run unattended and get a 15–20s proof recording at the end. The agent takes its cue from how you frame the task.
 
@@ -40,7 +40,8 @@ Engine and host agent (Claude vs Codex) are publish-time render choices, not sep
 - Chrome or Chromium with hardware WebGL2 for Babylon.js browser capture
 - Python 3 with pip
 - API keys as environment variables:
-  - `GOOGLE_API_KEY` — [Google AI Studio](https://aistudio.google.com/) for Gemini image generation and Veo video generation (`GOOGLE_GEMINI_BASE_URL` switches to a non-official Gemini-compatible endpoint)
+  - `GOOGLE_API_KEY` — [Google AI Studio](https://aistudio.google.com/) for Gemini image generation (`GOOGLE_GEMINI_BASE_URL` switches to a non-official Gemini-compatible endpoint); also covers video when `VIDEO_BACKEND=veo`
+  - `XAI_API_KEY` — [xAI Grok](https://console.x.ai/home) for video generation (default video backend)
   - `TRIPO3D_API_KEY` — [Tripo3D](https://platform.tripo3d.ai/) for 3D generation (only needed for 3D pipelines)
   - Optional: `ALT_IMAGE_BASE_URL` / `ALT_IMAGE_API_KEY` — any OpenAI-compatible images endpoint for the cheap image tier (see [setup.md](setup.md))
 - System packages from [setup.md](setup.md): `vulkan-tools`, `xvfb`, `ffmpeg`, `imagemagick`, plus platform-specific extras

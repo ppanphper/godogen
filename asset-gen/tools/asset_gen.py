@@ -3,21 +3,24 @@
 
 Subcommands:
   image     Generate a PNG from a prompt (Gemini 5-15¢, or an OpenAI-compatible provider)
-  video     Generate MP4 video from prompt + reference image (Veo via the Gemini API)
+  video     Generate MP4 video from prompt + reference image (Grok 5¢/sec default, or Veo)
   glb       Convert a PNG to a static GLB (30¢ default, 60¢ hd)
   rig       Convert a PNG to a rigged biped GLB (preset + 25¢)
   retarget  Apply a biped preset animation to a rigged GLB (10¢)
   resume    Resume a timed-out Tripo3D job (glb/rig/retarget) from its sidecar — no extra cost
 
 Providers are configured via environment variables:
-  GOOGLE_API_KEY           Gemini images + Veo video (required)
+  GOOGLE_API_KEY           Gemini images (+ Veo video when that backend is selected)
   GOOGLE_GEMINI_BASE_URL   optional non-official Gemini-compatible endpoint
+  XAI_API_KEY              Grok video generation (default video backend)
+  XAI_API_HOST             optional alternative xAI gRPC host
   ALT_IMAGE_BASE_URL       optional OpenAI-compatible images endpoint (e.g. https://api.example.com/v1)
   ALT_IMAGE_API_KEY        key for the OpenAI-compatible endpoint
   ALT_IMAGE_MODEL          model name at that endpoint (default: grok-2-image)
   ALT_IMAGE_COST_CENTS     estimated cost per image, for reporting (default: 2)
-  VIDEO_MODEL              Veo model id (default: veo-3.0-fast-generate-001)
-  VIDEO_COST_CENTS_PER_SEC estimated video cost per second, for reporting (default: 15)
+  VIDEO_BACKEND            grok (default) | veo
+  VIDEO_MODEL              override the active backend's model id
+  VIDEO_COST_CENTS_PER_SEC estimated video cost per second (default: grok 5, veo 15)
 
 Output: JSON to stdout. Progress to stderr.
 """
@@ -47,10 +50,20 @@ from tripo3d import (
 
 TOOLS_DIR = Path(__file__).parent
 
-VIDEO_MODEL = os.environ.get("VIDEO_MODEL", "veo-3.0-fast-generate-001")
-VIDEO_COST_PER_SEC = int(os.environ.get("VIDEO_COST_CENTS_PER_SEC", "15"))  # cents, estimate
-VIDEO_POLL_INTERVAL = 10  # seconds
-VIDEO_POLL_TIMEOUT = 600  # seconds
+VIDEO_BACKEND = os.environ.get("VIDEO_BACKEND", "grok")  # grok | veo
+VIDEO_MODEL_DEFAULTS = {"grok": "grok-imagine-video", "veo": "veo-3.0-fast-generate-001"}
+VIDEO_COST_DEFAULTS = {"grok": 5, "veo": 15}  # cents/sec
+VIDEO_POLL_INTERVAL = 10  # seconds (veo)
+VIDEO_POLL_TIMEOUT = 600  # seconds (veo)
+
+
+def _video_model(backend: str) -> str:
+    return os.environ.get("VIDEO_MODEL") or VIDEO_MODEL_DEFAULTS[backend]
+
+
+def _video_cost_per_sec(backend: str) -> int:
+    env = os.environ.get("VIDEO_COST_CENTS_PER_SEC")
+    return int(env) if env else VIDEO_COST_DEFAULTS[backend]
 
 QUALITY_PRESETS = {
     "default": {
@@ -238,11 +251,85 @@ def cmd_image(args):
         _generate_alt(args, output, cost)
 
 
-def cmd_video(args):
+def _video_grok(args, output: Path, model: str):
+    import xai_sdk  # lazy: only the grok video backend needs it
+
+    image_url = _image_data_uri(Path(args.image))
+    client_kwargs = {}
+    if os.environ.get("XAI_API_HOST"):
+        client_kwargs["api_host"] = os.environ["XAI_API_HOST"]
+    client = xai_sdk.Client(**client_kwargs)
+    resp = client.video.generate(
+        prompt=args.prompt,
+        model=model,
+        image_url=image_url,
+        duration=args.duration,
+        aspect_ratio="1:1",
+        resolution=args.resolution,
+    )
+    print("  Downloading video...", file=sys.stderr)
+    dl = requests.get(resp.url, timeout=120)
+    dl.raise_for_status()
+    output.write_bytes(dl.content)
+    return args.duration
+
+
+def _video_veo(args, output: Path, model: str):
     # Veo clips are 4-8s; shorter requests are clamped up. Loop-trim
     # (find_loop_frame.py) extracts the cycle downstream, so extra length is fine.
     duration = min(max(args.duration, 4), 8)
-    cost = duration * VIDEO_COST_PER_SEC
+    client = genai.Client()
+    image = types.Image(
+        image_bytes=Path(args.image).read_bytes(),
+        mime_type=_mime_for_image(Path(args.image)),
+    )
+    config = types.GenerateVideosConfig(
+        number_of_videos=1,
+        duration_seconds=duration,
+        generate_audio=False,
+    )
+    try:
+        op = client.models.generate_videos(model=model, prompt=args.prompt, image=image, config=config)
+    except Exception as e:
+        if "duration" not in str(e).lower():
+            raise
+        # Model has a fixed clip length; retry letting the API pick it
+        print(f"  duration_seconds rejected ({e}); retrying with model default", file=sys.stderr)
+        config.duration_seconds = None
+        op = client.models.generate_videos(model=model, prompt=args.prompt, image=image, config=config)
+
+    waited = 0
+    while not op.done:
+        if waited >= VIDEO_POLL_TIMEOUT:
+            raise TimeoutError(f"Video generation still running after {VIDEO_POLL_TIMEOUT}s (operation: {op.name})")
+        time.sleep(VIDEO_POLL_INTERVAL)
+        waited += VIDEO_POLL_INTERVAL
+        op = client.operations.get(op)
+        print(f"  ...{waited}s", file=sys.stderr)
+
+    if op.error:
+        raise RuntimeError(f"Video generation failed: {op.error}")
+    videos = op.response.generated_videos if op.response else None
+    if not videos:
+        raise RuntimeError("No video returned (possibly blocked by safety filters)")
+
+    print("  Downloading video...", file=sys.stderr)
+    vid = videos[0].video
+    client.files.download(file=vid)
+    if vid.video_bytes:
+        output.write_bytes(vid.video_bytes)
+    else:
+        raise RuntimeError(f"Video has no bytes after download (uri: {vid.uri})")
+    return duration
+
+
+def cmd_video(args):
+    backend = args.backend or VIDEO_BACKEND
+    if backend not in VIDEO_MODEL_DEFAULTS:
+        result_json(False, error=f"Unknown video backend {backend!r}. Use: {', '.join(VIDEO_MODEL_DEFAULTS)}")
+        sys.exit(1)
+    model = _video_model(backend)
+
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -251,61 +338,19 @@ def cmd_video(args):
         result_json(False, error=f"Reference image not found: {image_path}")
         sys.exit(1)
 
-    print(f"Generating {duration}s video ({VIDEO_MODEL})...", file=sys.stderr)
+    print(f"Generating {args.duration}s video ({backend}: {model})...", file=sys.stderr)
 
     try:
-        client = genai.Client()
-        image = types.Image(
-            image_bytes=image_path.read_bytes(),
-            mime_type=_mime_for_image(image_path),
-        )
-        config = types.GenerateVideosConfig(
-            number_of_videos=1,
-            duration_seconds=duration,
-            generate_audio=False,
-        )
-        try:
-            op = client.models.generate_videos(
-                model=VIDEO_MODEL, prompt=args.prompt, image=image, config=config,
-            )
-        except Exception as e:
-            if "duration" not in str(e).lower():
-                raise
-            # Model has a fixed clip length; retry letting the API pick it
-            print(f"  duration_seconds rejected ({e}); retrying with model default", file=sys.stderr)
-            config.duration_seconds = None
-            op = client.models.generate_videos(
-                model=VIDEO_MODEL, prompt=args.prompt, image=image, config=config,
-            )
-
-        waited = 0
-        while not op.done:
-            if waited >= VIDEO_POLL_TIMEOUT:
-                raise TimeoutError(f"Video generation still running after {VIDEO_POLL_TIMEOUT}s (operation: {op.name})")
-            time.sleep(VIDEO_POLL_INTERVAL)
-            waited += VIDEO_POLL_INTERVAL
-            op = client.operations.get(op)
-            print(f"  ...{waited}s", file=sys.stderr)
-
-        if op.error:
-            raise RuntimeError(f"Video generation failed: {op.error}")
-        videos = op.response.generated_videos if op.response else None
-        if not videos:
-            raise RuntimeError("No video returned (possibly blocked by safety filters)")
-
-        print("  Downloading video...", file=sys.stderr)
-        vid = videos[0].video
-        client.files.download(file=vid)
-        if vid.video_bytes:
-            output.write_bytes(vid.video_bytes)
+        if backend == "grok":
+            billed = _video_grok(args, output, model)
         else:
-            raise RuntimeError(f"Video has no bytes after download (uri: {vid.uri})")
+            billed = _video_veo(args, output, model)
     except Exception as e:
         result_json(False, error=str(e))
         sys.exit(1)
 
     print(f"Saved: {output}", file=sys.stderr)
-    result_json(True, path=str(output), cost_cents=cost)
+    result_json(True, path=str(output), cost_cents=billed * _video_cost_per_sec(backend))
 
 
 def _sidecar_path(output: Path) -> Path:
@@ -603,12 +648,14 @@ def main():
     p_img.add_argument("-o", "--output", required=True, help="Output PNG path")
     p_img.set_defaults(func=cmd_image)
 
-    p_vid = sub.add_parser("video", help=f"Generate MP4 video from prompt + reference image (Veo, ~{VIDEO_COST_PER_SEC}¢/sec)")
+    p_vid = sub.add_parser("video", help="Generate MP4 video from prompt + reference image (Grok 5¢/sec default, or Veo)")
     p_vid.add_argument("--prompt", required=True, help="Video generation prompt")
     p_vid.add_argument("--image", required=True, help="Reference image path (starting frame)")
-    p_vid.add_argument("--duration", type=int, required=True, help="Duration in seconds (clamped to the model's 4-8s range)")
+    p_vid.add_argument("--duration", type=int, required=True, help="Duration in seconds (grok: 1-15; veo: clamped to 4-8)")
     p_vid.add_argument("--resolution", choices=["480p", "720p"], default="720p",
-                       help="Kept for CLI compatibility; Veo output resolution is model-controlled")
+                       help="Video resolution (grok only; veo output is model-controlled). Default: 720p")
+    p_vid.add_argument("--backend", choices=["grok", "veo"], default=None,
+                       help="Video backend. Default: VIDEO_BACKEND env or grok. veo needs only GOOGLE_API_KEY.")
     p_vid.add_argument("-o", "--output", required=True, help="Output MP4 path")
     p_vid.set_defaults(func=cmd_video)
 
