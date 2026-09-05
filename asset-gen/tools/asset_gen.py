@@ -395,10 +395,11 @@ def _video_veo(args, output: Path, model: str):
         image_bytes=Path(args.image).read_bytes(),
         mime_type=_mime_for_image(Path(args.image)),
     )
+    # generate_audio is rejected in Gemini Developer API mode; audio is
+    # irrelevant here anyway (frames are extracted downstream).
     config = types.GenerateVideosConfig(
         number_of_videos=1,
         duration_seconds=duration,
-        generate_audio=False,
     )
     try:
         op = client.models.generate_videos(model=model, prompt=args.prompt, image=image, config=config)
