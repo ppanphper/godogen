@@ -341,7 +341,8 @@ def _video_alt(args, output: Path, model: str):
         break
     if resp is None:
         raise RuntimeError(f"No supported video endpoint at {base} (tried /videos/generations and /video/generations)")
-    resp.raise_for_status()
+    if resp.status_code >= 400:
+        raise RuntimeError(f"HTTP {resp.status_code} from video endpoint: {resp.text[:300]}")
     body = resp.json()
     data_field = body.get("data")
     request_id = (
