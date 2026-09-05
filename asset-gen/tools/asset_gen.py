@@ -288,11 +288,31 @@ def _video_grok(args, output: Path, model: str):
     return args.duration
 
 
-def _video_alt(args, output: Path, model: str):
-    """xAI-REST-compatible video generation through a gateway (e.g. new-api).
+def _find_video_url(obj):
+    """Recursively find an http(s) url under url-ish keys in a response payload."""
+    if isinstance(obj, dict):
+        for k in ("video_url", "url", "video"):
+            v = obj.get(k)
+            if isinstance(v, str) and v.startswith("http"):
+                return v
+        for v in obj.values():
+            found = _find_video_url(v)
+            if found:
+                return found
+    elif isinstance(obj, list):
+        for v in obj:
+            found = _find_video_url(v)
+            if found:
+                return found
+    return None
 
-    POST {base}/videos/generations -> {request_id}, then poll
-    GET {base}/videos/{request_id} until status is done.
+
+def _video_alt(args, output: Path, model: str):
+    """Video generation through an xAI-REST or new-api-style gateway.
+
+    Tries POST {base}/videos/generations (xAI REST), falling back to
+    POST {base}/video/generations (new-api unified task API), then polls
+    the matching status endpoint until the clip is ready.
     """
     base = (os.environ.get("ALT_VIDEO_BASE_URL") or ALT_IMAGE_BASE_URL).rstrip("/")
     key = os.environ.get("ALT_VIDEO_API_KEY") or ALT_IMAGE_API_KEY
@@ -300,21 +320,39 @@ def _video_alt(args, output: Path, model: str):
         raise ValueError("alt video backend needs ALT_VIDEO_BASE_URL/ALT_VIDEO_API_KEY (or the ALT_IMAGE_* equivalents)")
     headers = {"Authorization": f"Bearer {key}"}
 
-    resp = requests.post(
-        f"{base}/videos/generations",
-        headers=headers,
-        json={
-            "model": model,
-            "prompt": args.prompt,
-            "image_url": _image_data_uri(Path(args.image)),
-            "duration": args.duration,
-            "resolution": args.resolution,
-            "aspect_ratio": "1:1",
-        },
-        timeout=120,
-    )
+    payload = {
+        "model": model,
+        "prompt": args.prompt,
+        "image_url": _image_data_uri(Path(args.image)),
+        "duration": args.duration,
+        "resolution": args.resolution,
+        "aspect_ratio": "1:1",
+    }
+    variants = [
+        (f"{base}/videos/generations", f"{base}/videos/{{id}}"),          # xAI REST
+        (f"{base}/video/generations", f"{base}/video/generations/{{id}}"),  # new-api unified
+    ]
+    resp = poll_url_tpl = None
+    for submit_url, tpl in variants:
+        r = requests.post(submit_url, headers=headers, json=payload, timeout=120)
+        if r.status_code == 404 or "Invalid URL" in r.text[:200]:
+            continue
+        resp, poll_url_tpl = r, tpl
+        break
+    if resp is None:
+        raise RuntimeError(f"No supported video endpoint at {base} (tried /videos/generations and /video/generations)")
     resp.raise_for_status()
-    request_id = resp.json()["request_id"]
+    body = resp.json()
+    data_field = body.get("data")
+    request_id = (
+        body.get("request_id")
+        or (data_field.get("task_id") if isinstance(data_field, dict) else None)
+        or (data_field if isinstance(data_field, str) else None)
+        or body.get("task_id")
+        or body.get("id")
+    )
+    if not request_id:
+        raise RuntimeError(f"No request/task id in response: {json.dumps(body)[:300]}")
     print(f"  request_id: {request_id}", file=sys.stderr)
 
     waited = 0
@@ -323,17 +361,21 @@ def _video_alt(args, output: Path, model: str):
             raise TimeoutError(f"Video generation still running after {VIDEO_POLL_TIMEOUT}s (request_id: {request_id})")
         time.sleep(VIDEO_POLL_INTERVAL)
         waited += VIDEO_POLL_INTERVAL
-        poll = requests.get(f"{base}/videos/{request_id}", headers=headers, timeout=60)
+        poll = requests.get(poll_url_tpl.format(id=request_id), headers=headers, timeout=60)
         poll.raise_for_status()
         data = poll.json()
-        status = data.get("status")
-        print(f"  ...{waited}s ({status})", file=sys.stderr)
-        if status == "done":
+        status = str(
+            data.get("status")
+            or (data.get("data") or {}).get("status", "")
+            or ""
+        ).lower()
+        print(f"  ...{waited}s ({status or 'pending'})", file=sys.stderr)
+        if status in ("done", "success", "succeeded", "completed"):
             break
-        if status in ("failed", "expired"):
+        if status in ("failed", "expired", "failure", "error"):
             raise RuntimeError(f"Video generation {status}: {json.dumps(data)[:500]}")
 
-    video_url = (data.get("video") or {}).get("url") or data.get("url")
+    video_url = _find_video_url(data)
     if not video_url:
         raise RuntimeError(f"No video url in response: {json.dumps(data)[:500]}")
     print("  Downloading video...", file=sys.stderr)
