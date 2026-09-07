@@ -17,9 +17,9 @@ Generate PNG images (Gemini, or an OpenAI-compatible provider), MP4 videos (Veo)
 | Model | Flag | Cost | Best for |
 |-------|------|------|----------|
 | Gemini | `--model gemini` (default) | 5¢ (512) · 7¢ (1K) · 10¢ (2K) · 15¢ (4K) | Precise prompt following — references, characters, 3D refs, exact layouts, image-to-image |
-| Alt | `--model alt` | ~2¢ (provider-dependent) | Cheap simple images — textures, item kits, scenic backgrounds. Optional; needs `ALT_IMAGE_BASE_URL`/`ALT_IMAGE_API_KEY` (OpenAI-compatible endpoint), silently falls back to Gemini when unset |
+| Alt | `--model alt` | provider-dependent (`ALT_IMAGE_COST_CENTS`) | OpenAI-compatible endpoint via `ALT_IMAGE_BASE_URL`/`ALT_IMAGE_API_KEY`/`ALT_IMAGE_MODEL`; silently falls back to Gemini when unset |
 
-Gemini honors `GOOGLE_GEMINI_BASE_URL` for non-official endpoints. The alt backend ignores `--size`/`--aspect-ratio` and rejects reference images — use Gemini whenever the result must match exact dimensions or a reference.
+Gemini honors `GOOGLE_GEMINI_BASE_URL` for non-official endpoints. The alt backend's capabilities depend on the configured model: with a **gpt-image** model it supports reference images (image-to-image), aspect-ratio-mapped sizes, and `ALT_IMAGE_QUALITY` (low/medium/high) — it can then serve as the primary backend when Gemini is unavailable. With other models (e.g. grok relays) it is a cheap simple-image tier: size/aspect are provider defaults and reference images are rejected — use Gemini for anything precise.
 
 ## Images
 

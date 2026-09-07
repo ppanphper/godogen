@@ -127,8 +127,28 @@ ALL_SIZES = ["512", "1K", "2K", "4K"]
 ALL_ASPECT_RATIOS = sorted(set(GEMINI_ASPECT_RATIOS))
 
 
+ALT_IMAGE_QUALITY = os.environ.get("ALT_IMAGE_QUALITY", "")  # low/medium/high for gpt-image models
+
+
 def _alt_configured() -> bool:
     return bool(ALT_IMAGE_BASE_URL and ALT_IMAGE_API_KEY)
+
+
+def _alt_is_gpt() -> bool:
+    return ALT_IMAGE_MODEL.startswith("gpt-image")
+
+
+def _alt_openai_size(aspect_ratio: str) -> str:
+    """Map an aspect ratio to the OpenAI image size grid."""
+    try:
+        w, h = (float(x) for x in aspect_ratio.split(":"))
+    except ValueError:
+        return "1024x1024"
+    if w > h:
+        return "1536x1024"
+    if w < h:
+        return "1024x1536"
+    return "1024x1024"
 
 
 def _mime_for_image(path: Path) -> str:
@@ -192,29 +212,54 @@ def _generate_gemini(args, output: Path, cost: int):
 
 
 def _generate_alt(args, output: Path, cost: int):
-    """Generate via an OpenAI-compatible /v1/images/generations endpoint.
+    """Generate via an OpenAI-compatible images endpoint.
 
-    Provider support for size/aspect varies, so neither is sent; expect the
-    provider's default (typically ~1024px square). Use gemini when exact
-    size, aspect ratio, or a reference image is required.
+    With a gpt-image model, exact sizes (mapped from --aspect-ratio), quality
+    (ALT_IMAGE_QUALITY), and reference images (via /images/edits) are
+    supported, so alt can serve as the primary backend. With other models
+    (e.g. grok relays), size/aspect are provider-default and reference
+    images are unsupported — use gemini for those.
     """
-    if args.image:
-        result_json(False, error="The alt backend does not support reference images. Use --model gemini for image-to-image.")
+    if args.image and not _alt_is_gpt():
+        result_json(False, error="The alt backend only supports reference images with gpt-image models. Use --model gemini for image-to-image.")
         sys.exit(1)
 
+    headers = {"Authorization": f"Bearer {ALT_IMAGE_API_KEY}"}
     try:
-        resp = requests.post(
-            f"{ALT_IMAGE_BASE_URL}/images/generations",
-            headers={"Authorization": f"Bearer {ALT_IMAGE_API_KEY}"},
-            json={
-                "model": ALT_IMAGE_MODEL,
-                "prompt": args.prompt,
-                "n": 1,
-                "response_format": "b64_json",
-            },
-            timeout=300,
-        )
-        resp.raise_for_status()
+        if args.image:
+            ref_path = Path(args.image)
+            if not ref_path.exists():
+                result_json(False, error=f"Reference image not found: {ref_path}")
+                sys.exit(1)
+            form = {"model": ALT_IMAGE_MODEL, "prompt": args.prompt, "n": "1",
+                    "size": _alt_openai_size(args.aspect_ratio)}
+            if ALT_IMAGE_QUALITY:
+                form["quality"] = ALT_IMAGE_QUALITY
+            with ref_path.open("rb") as fh:
+                resp = requests.post(
+                    f"{ALT_IMAGE_BASE_URL}/images/edits",
+                    headers=headers,
+                    data=form,
+                    files={"image": (ref_path.name, fh, _mime_for_image(ref_path))},
+                    timeout=300,
+                )
+        else:
+            payload = {"model": ALT_IMAGE_MODEL, "prompt": args.prompt, "n": 1}
+            if _alt_is_gpt():
+                # gpt-image models always return b64 and take explicit sizes
+                payload["size"] = _alt_openai_size(args.aspect_ratio)
+                if ALT_IMAGE_QUALITY:
+                    payload["quality"] = ALT_IMAGE_QUALITY
+            else:
+                payload["response_format"] = "b64_json"
+            resp = requests.post(
+                f"{ALT_IMAGE_BASE_URL}/images/generations",
+                headers=headers,
+                json=payload,
+                timeout=300,
+            )
+        if resp.status_code >= 400:
+            raise RuntimeError(f"HTTP {resp.status_code} from images endpoint: {resp.text[:300]}")
         data = resp.json()["data"][0]
         if data.get("b64_json"):
             raw = base64.b64decode(data["b64_json"])
